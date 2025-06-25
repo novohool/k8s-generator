@@ -392,7 +392,7 @@ export class ${config.name.charAt(0).toUpperCase() + config.name.slice(1)}Storag
     if (secondaryResourceOptions[resourceType] && secondaryResourceOptions[resourceType].length > 0 && secondaryResourceType && secondaryResourceType !== '' && secondaryResourceType !== 'None') {
       switch (secondaryResourceType) {
         case 'pvc':
-          secondaryCode = `// --- Secondary: PVC ---\nimport * as k8s from '@kubernetes/client-node';\n\nconst secondaryPvcManifest: k8s.V1PersistentVolumeClaim = {\n  apiVersion: 'v1',\n  kind: 'PersistentVolumeClaim',\n  metadata: {\n    name: '${config.secondaryPvcName || config.name + '-pvc'}',\n    namespace: '${config.namespace}',\n    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  spec: {\n    accessModes: ['${config.pvcAccessModes}'],\n    resources: {\n      requests: {\n        storage: '${config.pvcStorage}'\n      }\n    },\n    ${(config.pvcStorageClass ? `storageClassName: '${config.pvcStorageClass}',` : '')}\n    ${(config.volumeMode ? `volumeMode: '${config.volumeMode}',` : '')}\n  }\n};\n\nexport async function createSecondaryPVC() {\n  const kc = new k8s.KubeConfig();\n  kc.loadFromDefault();\n  const k8sCoreApi = kc.makeApiClient(k8s.CoreV1Api);\n  try {\n    const response = await k8sCoreApi.createNamespacedPersistentVolumeClaim(\n      '${config.namespace}',\n      secondaryPvcManifest\n    );\n    return response.body;\n  } catch (error) {\n    console.error('Error creating secondary PVC:', error);\n    throw error;\n  }\n}`;
+          secondaryCode = `// --- Secondary: PVC ---\nimport * as k8s from '@kubernetes/client-node';\n\nconst secondaryPvcManifest: k8s.V1PersistentVolumeClaim = {\n  apiVersion: 'v1',\n  kind: 'PersistentVolumeClaim',\n  metadata: {\n    name: '${config.secondaryPvcName || (config.name + "-pvc")}',\n    namespace: '${config.namespace}',\n    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  spec: {\n    accessModes: ['${config.pvcAccessModes}'],\n    resources: {\n      requests: {\n        storage: '${config.pvcStorage}'\n      }\n    },\n    ${(config.pvcStorageClass ? `storageClassName: '${config.pvcStorageClass}',` : '')}\n    ${(config.volumeMode ? `volumeMode: '${config.volumeMode}',` : '')}\n  }\n};\n\nexport async function createSecondaryPVC() {\n  const kc = new k8s.KubeConfig();\n  kc.loadFromDefault();\n  const k8sCoreApi = kc.makeApiClient(k8s.CoreV1Api);\n  try {\n    const response = await k8sCoreApi.createNamespacedPersistentVolumeClaim(\n      '${config.namespace}',\n      secondaryPvcManifest\n    );\n    return response.body;\n  } catch (error) {\n    console.error('Error creating secondary PVC:', error);\n    throw error;\n  }\n}`;
           break;
         case 'secret':
           const secondarySecretDataK8s = config.secretData.split(',').reduce((acc: Record<string, string>, pair) => { const [k, v] = pair.split('='); if (k && v) acc[k.trim()] = v.trim(); return acc; }, {} as Record<string, string>);
@@ -403,7 +403,28 @@ export class ${config.name.charAt(0).toUpperCase() + config.name.slice(1)}Storag
           secondaryCode = `// --- Secondary: ConfigMap ---\nimport * as k8s from '@kubernetes/client-node';\n\nconst secondaryConfigMapManifest: k8s.V1ConfigMap = {\n  apiVersion: 'v1',\n  kind: 'ConfigMap',\n  metadata: {\n    name: '${config.name}-config',\n    namespace: '${config.namespace}'\n  },\n  data: ${JSON.stringify(secondaryConfigDataK8s, null, 8)}\n};\n\nexport async function createSecondaryConfigMap() {\n  const kc = new k8s.KubeConfig();\n  kc.loadFromDefault();\n  const k8sCoreApi = kc.makeApiClient(k8s.CoreV1Api);\n  try {\n    const response = await k8sCoreApi.createNamespacedConfigMap(\n      '${config.namespace}',\n      secondaryConfigMapManifest\n    );\n    return response.body;\n  } catch (error) {\n    console.error('Error creating secondary ConfigMap:', error);\n    throw error;\n  }\n}`;
           break;
         case 'ingress':
-          secondaryCode = `// --- Secondary: Ingress ---\nimport * as k8s from '@kubernetes/client-node';\n\nconst secondaryIngressManifest: k8s.V1Ingress = {\n  apiVersion: 'networking.k8s.io/v1',\n  kind: 'Ingress',\n  metadata: {\n    name: '${config.name}-ingress',\n    namespace: '${config.namespace}',\n    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  spec: {\n    rules: [\n      {\n        host: '${config.ingressHost}',\n        http: {\n          paths: [\n            {\n              path: '${config.ingressPath}',\n              pathType: 'Prefix',\n              backend: {\n                service: {\n                  name: '${config.ingressService}',\n                  port: { number: ${config.ingressServicePort} }\n                }\n              }\n            }\n          ]\n        }\n      }\n    ]\n  }\n};\n\nexport async function createSecondaryIngress() {\n  const kc = new k8s.KubeConfig();\n  kc.loadFromDefault();\n  const k8sNetworkingApi = kc.makeApiClient(k8s.NetworkingV1Api);\n  try {\n    const response = await k8sNetworkingApi.createNamespacedIngress(\n      '${config.namespace}',\n      secondaryIngressManifest\n    );\n    return response.body;\n  } catch (error) {\n    console.error('Error creating secondary Ingress:', error);\n    throw error;\n  }\n}`;
+          // 主为secret，副为ingress时，只有secretType为kubernetes.io/tls时才生成ingress，且spec.tls自动带secretName
+          if (resourceType === 'secret' && config.secretType === 'kubernetes.io/tls') {
+            // Pulumi
+            if (iacFramework === 'pulumi') {
+              secondaryCode = `// --- Secondary: Ingress ---\nimport * as k8s from "@pulumi/kubernetes";\n\nconst secondaryIngress = new k8s.networking.v1.Ingress("${config.name}-ingress", {\n  metadata: {\n    name: "${config.name}-ingress",\n    namespace: "${config.namespace}",\n    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  spec: {\n    rules: [\n      {\n        host: "${config.ingressHost}",\n        http: {\n          paths: [\n            {\n              path: "${config.ingressPath}",\n              pathType: "Prefix",\n              backend: {\n                service: {\n                  name: "${config.ingressService}",\n                  port: { number: ${config.ingressServicePort} }\n                }\n              }\n            }\n          ]\n        }\n      }\n    ],\n    tls: [\n      {\n        hosts: ["${config.ingressHost}"], secretName: "${config.name}-secret"\n      }\n    ]\n  }\n});\n\nexport const secondaryIngressName = secondaryIngress.metadata.name;`;
+              break;
+            }
+            // K8s Client
+            if (iacFramework === 'kubernetes-client') {
+              secondaryCode = `// --- Secondary: Ingress ---\nimport * as k8s from '@kubernetes/client-node';\n\nconst secondaryIngressManifest: k8s.V1Ingress = {\n  apiVersion: 'networking.k8s.io/v1',\n  kind: 'Ingress',\n  metadata: {\n    name: '${config.name}-ingress',\n    namespace: '${config.namespace}',\n    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  spec: {\n    rules: [\n      {\n        host: '${config.ingressHost}',\n        http: {\n          paths: [\n            {\n              path: '${config.ingressPath}',\n              pathType: 'Prefix',\n              backend: {\n                service: {\n                  name: '${config.ingressService}',\n                  port: { number: ${config.ingressServicePort} }\n                }\n              }\n            }\n          ]\n        }\n      }\n    ],\n    tls: [\n      {\n        hosts: ['${config.ingressHost}'],\n        secretName: '${config.name}-secret'\n      }\n    ]\n  }\n};\n\nexport async function createSecondaryIngress() {\n  const kc = new k8s.KubeConfig();\n  kc.loadFromDefault();\n  const k8sNetworkingApi = kc.makeApiClient(k8s.NetworkingV1Api);\n  try {\n    const response = await k8sNetworkingApi.createNamespacedIngress(\n      '${config.namespace}',\n      secondaryIngressManifest\n    );\n    return response.body;\n  } catch (error) {\n    console.error('Error creating secondary Ingress:', error);\n    throw error;\n  }\n}`;
+              break;
+            }
+            // YAML
+            // 由generateK8sYaml自动处理（见下）
+          } else if (resourceType === 'secret') {
+            // 非TLS类型不生成
+            secondaryCode = '';
+            break;
+          }
+          // 其余情况按原有逻辑生成ingress代码
+          secondaryCode = `// --- Secondary: Ingress ---\nimport * as k8s from '@kubernetes/client-node';\n\nconst secondaryIngressManifest: k8s.V1Ingress = {\n  apiVersion: 'networking.k8s.io/v1',\n  kind: 'Ingress',\n  metadata: {\n    name: '${config.name}-ingress',\n    namespace: '${config.namespace}',
+    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  spec: {\n    rules: [\n      {\n        host: '${config.ingressHost}',\n        http: {\n          paths: [\n            {\n              path: '${config.ingressPath}',\n              pathType: 'Prefix',\n              backend: {\n                service: {\n                  name: '${config.ingressService}',\n                  port: { number: ${config.ingressServicePort} }\n                }\n              }\n            }\n          ]\n        }\n      }\n    ]\n  }\n};\n\nexport async function createSecondaryIngress() {\n  const kc = new k8s.KubeConfig();\n  kc.loadFromDefault();\n  const k8sNetworkingApi = kc.makeApiClient(k8s.NetworkingV1Api);\n  try {\n    const response = await k8sNetworkingApi.createNamespacedIngress(\n      '${config.namespace}',\n      secondaryIngressManifest\n    );\n    return response.body;\n  } catch (error) {\n    console.error('Error creating secondary Ingress:', error);\n    throw error;\n  }\n}`;
           break;
         case 'deployment':
           // 主为secret，副为deployment时，secondary deployment 代码应自动带有envFrom: secretRef
@@ -1386,6 +1407,16 @@ export async function createStorageClass() {
                   },
                 },
               ],
+              ...(resourceType === 'secret' && config.secretType === 'kubernetes.io/tls'
+                ? {
+                    tls: [
+                      {
+                        hosts: [config.ingressHost],
+                        secretName: `${config.name}-secret`,
+                      },
+                    ],
+                  }
+                : {}),
             },
           };
           break;
@@ -1600,36 +1631,9 @@ export async function createStorageClass() {
               </div>
             </>
           );
-        } else {
-          return (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Secret Type</label>
-                <select
-                  value={config.secretType}
-                  onChange={(e) => handleConfigChange('secretType', e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
-                >
-                  <option value="Opaque">Opaque</option>
-                  <option value="kubernetes.io/dockerconfigjson">kubernetes.io/dockerconfigjson</option>
-                  <option value="kubernetes.io/tls">kubernetes.io/tls</option>
-                  <option value="kubernetes.io/basic-auth">kubernetes.io/basic-auth</option>
-                  <option value="kubernetes.io/ssh-auth">kubernetes.io/ssh-auth</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">Secret Data (KEY=value, separated by commas)</label>
-                <input
-                  type="text"
-                  value={config.secretData}
-                  onChange={(e) => handleConfigChange('secretData', e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
-                  placeholder="username=admin,password=123456"
-                />
-              </div>
-            </>
-          );
         }
+        // 其余情况不渲染特殊表单
+        return null;
       case 'configmap':
         return (
           <div>
