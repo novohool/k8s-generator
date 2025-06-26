@@ -42,6 +42,22 @@ const K8sTypeScriptIaCGenerator: React.FC = () => {
     storageClassParameters: '',
     secondaryPvcName: '',
     secondaryStorageClassName: '',
+    secondaryConfigMapName: '',
+    secondaryConfigMapLabels: '',
+    secondaryConfigMapAnnotations: '',
+    secondaryConfigMapImmutable: 'false',
+    secondaryConfigMapData: '',
+    secondarySecretName: '',
+    secondarySecretLabels: '',
+    secondarySecretAnnotations: '',
+    secondarySecretImmutable: 'false',
+    secondarySecretType: 'Opaque',
+    secondarySecretData: '',
+    mountData: '',
+    secondaryServiceName: '',
+    secondaryServicePort: 80,
+    secondaryServiceType: 'ClusterIP',
+    secondaryServiceLabels: '',
   });
   
   const [generatedCode, setGeneratedCode] = useState('');
@@ -75,6 +91,7 @@ const K8sTypeScriptIaCGenerator: React.FC = () => {
     ],
     ingress: [
       { value: 'secret', label: 'Secret' },
+      { value: 'service', label: 'Service' },
     ],
     secret: [
       { value: 'deployment', label: 'Deployment' },
@@ -392,56 +409,145 @@ export class ${config.name.charAt(0).toUpperCase() + config.name.slice(1)}Storag
     if (secondaryResourceOptions[resourceType] && secondaryResourceOptions[resourceType].length > 0 && secondaryResourceType && secondaryResourceType !== '' && secondaryResourceType !== 'None') {
       switch (secondaryResourceType) {
         case 'pvc':
-          secondaryCode = `// --- Secondary: PVC ---\nimport * as k8s from '@kubernetes/client-node';\n\nconst secondaryPvcManifest: k8s.V1PersistentVolumeClaim = {\n  apiVersion: 'v1',\n  kind: 'PersistentVolumeClaim',\n  metadata: {\n    name: '${config.secondaryPvcName || (config.name + "-pvc")}',\n    namespace: '${config.namespace}',\n    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  spec: {\n    accessModes: ['${config.pvcAccessModes}'],\n    resources: {\n      requests: {\n        storage: '${config.pvcStorage}'\n      }\n    },\n    ${(config.pvcStorageClass ? `storageClassName: '${config.pvcStorageClass}',` : '')}\n    ${(config.volumeMode ? `volumeMode: '${config.volumeMode}',` : '')}\n  }\n};\n\nexport async function createSecondaryPVC() {\n  const kc = new k8s.KubeConfig();\n  kc.loadFromDefault();\n  const k8sCoreApi = kc.makeApiClient(k8s.CoreV1Api);\n  try {\n    const response = await k8sCoreApi.createNamespacedPersistentVolumeClaim(\n      '${config.namespace}',\n      secondaryPvcManifest\n    );\n    return response.body;\n  } catch (error) {\n    console.error('Error creating secondary PVC:', error);\n    throw error;\n  }\n}`;
+          secondaryCode = `import * as k8s from "@pulumi/kubernetes";
+
+const ${config.secondaryPvcName || config.name + 'Pvc'} = new k8s.core.v1.PersistentVolumeClaim("${config.secondaryPvcName || config.name + '-pvc'}", {
+  metadata: {
+    name: "${config.secondaryPvcName || config.name + '-pvc'}",
+    namespace: "${config.namespace}",
+    labels: ${JSON.stringify(parseLabels(config.labels), null, 8)}
+  },
+  spec: {
+    accessModes: ["${config.pvcAccessModes}"],
+    resources: {
+      requests: {
+        storage: "${config.pvcStorage}"
+      }
+    },
+    storageClassName: ${(resourceType === 'storageclass' && secondaryResourceType === 'pvc')
+      ? `"${config.name}-storageclass"`
+      : (`"${config.secondaryStorageClassName || config.pvcStorageClass || ''}"`)},
+    ${(config.volumeMode ? `volumeMode: "${config.volumeMode}",` : '')}
+  }
+});
+export const secondaryPvcName = ${config.secondaryPvcName || config.name + 'Pvc'}.metadata.name;`;
           break;
-        case 'secret':
-          const secondarySecretDataK8s = config.secretData.split(',').reduce((acc: Record<string, string>, pair) => { const [k, v] = pair.split('='); if (k && v) acc[k.trim()] = v.trim(); return acc; }, {} as Record<string, string>);
-          secondaryCode = `// --- Secondary: Secret ---\nimport * as k8s from '@kubernetes/client-node';\n\nconst secondarySecretManifest: k8s.V1Secret = {\n  apiVersion: 'v1',\n  kind: 'Secret',\n  metadata: {\n    name: '${config.name}-secret',\n    namespace: '${config.namespace}',\n    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  type: '${config.secretType}',\n  stringData: ${JSON.stringify(secondarySecretDataK8s, null, 8)}\n};\n\nexport async function createSecondarySecret() {\n  const kc = new k8s.KubeConfig();\n  kc.loadFromDefault();\n  const k8sCoreApi = kc.makeApiClient(k8s.CoreV1Api);\n  try {\n    const response = await k8sCoreApi.createNamespacedSecret(\n      '${config.namespace}',\n      secondarySecretManifest\n    );\n    return response.body;\n  } catch (error) {\n    console.error('Error creating secondary Secret:', error);\n    throw error;\n  }\n}`;
+        case 'secret': {
+          const secretData = (config.secondarySecretData || '').split('\n').reduce((acc: Record<string, string>, line) => {
+            const [k, v] = line.split('=');
+            if (k && v !== undefined && v !== '') acc[k.trim()] = v.trim();
+            return acc;
+          }, {} as Record<string, string>);
+          secondaryCode = `import * as k8s from "@pulumi/kubernetes";
+
+const ${config.secondarySecretName || config.name + 'Secret'} = new k8s.core.v1.Secret("${config.secondarySecretName || config.name + '-secret'}", {
+  metadata: {
+    name: "${config.secondarySecretName || config.name + '-secret'}",
+    namespace: "${config.namespace}",
+    labels: ${JSON.stringify(parseLabels(config.secondarySecretLabels || config.labels), null, 8)}
+  },
+  type: "${config.secondarySecretType || 'Opaque'}",
+  stringData: ${JSON.stringify(secretData, null, 8)}
+});
+export const secondarySecretName = ${config.secondarySecretName || config.name + 'Secret'}.metadata.name;`;
           break;
-        case 'configmap':
-          const secondaryConfigDataK8s = parseEnvVars(config.env).reduce((acc: Record<string, string>, env) => { acc[env.name] = env.value; return acc; }, {} as Record<string, string>);
-          secondaryCode = `// --- Secondary: ConfigMap ---\nimport * as k8s from '@kubernetes/client-node';\n\nconst secondaryConfigMapManifest: k8s.V1ConfigMap = {\n  apiVersion: 'v1',\n  kind: 'ConfigMap',\n  metadata: {\n    name: '${config.name}-config',\n    namespace: '${config.namespace}'\n  },\n  data: ${JSON.stringify(secondaryConfigDataK8s, null, 8)}\n};\n\nexport async function createSecondaryConfigMap() {\n  const kc = new k8s.KubeConfig();\n  kc.loadFromDefault();\n  const k8sCoreApi = kc.makeApiClient(k8s.CoreV1Api);\n  try {\n    const response = await k8sCoreApi.createNamespacedConfigMap(\n      '${config.namespace}',\n      secondaryConfigMapManifest\n    );\n    return response.body;\n  } catch (error) {\n    console.error('Error creating secondary ConfigMap:', error);\n    throw error;\n  }\n}`;
+        }
+        case 'configmap': {
+          const configMapData = (config.secondaryConfigMapData || '').split('\n').reduce((acc: Record<string, string>, line) => {
+            const [k, v] = line.split('=');
+            if (k && v !== undefined && v !== '') acc[k.trim()] = v.trim();
+            return acc;
+          }, {} as Record<string, string>);
+          secondaryCode = `import * as k8s from "@pulumi/kubernetes";
+
+const ${config.secondaryConfigMapName || config.name + 'ConfigMap'} = new k8s.core.v1.ConfigMap("${config.secondaryConfigMapName || config.name + '-config'}", {
+  metadata: {
+    name: "${config.secondaryConfigMapName || config.name + '-config'}",
+    namespace: "${config.namespace}",
+    labels: ${JSON.stringify(parseLabels(config.secondaryConfigMapLabels || config.labels), null, 8)}
+  },
+  data: ${JSON.stringify(configMapData, null, 8)}
+});
+export const secondaryConfigMapName = ${config.secondaryConfigMapName || config.name + 'ConfigMap'}.metadata.name;`;
           break;
-        case 'ingress':
-          // 主为secret，副为ingress时，只有secretType为kubernetes.io/tls时才生成ingress，且spec.tls自动带secretName
-          if (resourceType === 'secret' && config.secretType === 'kubernetes.io/tls') {
-            // Pulumi
-            if (iacFramework === 'pulumi') {
-              secondaryCode = `// --- Secondary: Ingress ---\nimport * as k8s from "@pulumi/kubernetes";\n\nconst secondaryIngress = new k8s.networking.v1.Ingress("${config.name}-ingress", {\n  metadata: {\n    name: "${config.name}-ingress",\n    namespace: "${config.namespace}",\n    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  spec: {\n    rules: [\n      {\n        host: "${config.ingressHost}",\n        http: {\n          paths: [\n            {\n              path: "${config.ingressPath}",\n              pathType: "Prefix",\n              backend: {\n                service: {\n                  name: "${config.ingressService}",\n                  port: { number: ${config.ingressServicePort} }\n                }\n              }\n            }\n          ]\n        }\n      }\n    ],\n    tls: [\n      {\n        hosts: ["${config.ingressHost}"], secretName: "${config.name}-secret"\n      }\n    ]\n  }\n});\n\nexport const secondaryIngressName = secondaryIngress.metadata.name;`;
-              break;
-            }
-            // K8s Client
-            if (iacFramework === 'kubernetes-client') {
-              secondaryCode = `// --- Secondary: Ingress ---\nimport * as k8s from '@kubernetes/client-node';\n\nconst secondaryIngressManifest: k8s.V1Ingress = {\n  apiVersion: 'networking.k8s.io/v1',\n  kind: 'Ingress',\n  metadata: {\n    name: '${config.name}-ingress',\n    namespace: '${config.namespace}',\n    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  spec: {\n    rules: [\n      {\n        host: '${config.ingressHost}',\n        http: {\n          paths: [\n            {\n              path: '${config.ingressPath}',\n              pathType: 'Prefix',\n              backend: {\n                service: {\n                  name: '${config.ingressService}',\n                  port: { number: ${config.ingressServicePort} }\n                }\n              }\n            }\n          ]\n        }\n      }\n    ],\n    tls: [\n      {\n        hosts: ['${config.ingressHost}'],\n        secretName: '${config.name}-secret'\n      }\n    ]\n  }\n};\n\nexport async function createSecondaryIngress() {\n  const kc = new k8s.KubeConfig();\n  kc.loadFromDefault();\n  const k8sNetworkingApi = kc.makeApiClient(k8s.NetworkingV1Api);\n  try {\n    const response = await k8sNetworkingApi.createNamespacedIngress(\n      '${config.namespace}',\n      secondaryIngressManifest\n    );\n    return response.body;\n  } catch (error) {\n    console.error('Error creating secondary Ingress:', error);\n    throw error;\n  }\n}`;
-              break;
-            }
-            // YAML
-            // 由generateK8sYaml自动处理（见下）
-          } else if (resourceType === 'secret') {
-            // 非TLS类型不生成
-            secondaryCode = '';
-            break;
+        }
+        case 'deployment': {
+          const envVars = parseEnvVars(config.env);
+          secondaryCode = `import * as k8s from "@pulumi/kubernetes";
+
+const ${config.name}SecondaryDeployment = new k8s.apps.v1.Deployment("${config.name}-deployment", {
+  metadata: {
+    name: "${config.name}",
+    namespace: "${config.namespace}",
+    labels: ${JSON.stringify(parseLabels(config.labels), null, 8)}
+  },
+  spec: {
+    replicas: ${config.replicas},
+    selector: { matchLabels: ${JSON.stringify(parseLabels(config.labels), null, 12)} },
+    template: {
+      metadata: { labels: ${JSON.stringify(parseLabels(config.labels), null, 16)} },
+      spec: {
+        containers: [{
+          name: "${config.name}",
+          image: "${config.image}",
+          ports: [{ containerPort: ${config.port} }],
+          env: [${envVars.map(env => `\n            { name: \"${env.name}\", value: \"${env.value}\" }`).join(',')}\n          ],
+          resources: {
+            requests: { cpu: "${config.cpu}", memory: "${config.memory}" },
+            limits: { cpu: "${config.cpuLimit}", memory: "${config.memoryLimit}" }
           }
-          // 其余情况按原有逻辑生成ingress代码
-          secondaryCode = `// --- Secondary: Ingress ---\nimport * as k8s from '@kubernetes/client-node';\n\nconst secondaryIngressManifest: k8s.V1Ingress = {\n  apiVersion: 'networking.k8s.io/v1',\n  kind: 'Ingress',\n  metadata: {\n    name: '${config.name}-ingress',\n    namespace: '${config.namespace}',
-    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  spec: {\n    rules: [\n      {\n        host: '${config.ingressHost}',\n        http: {\n          paths: [\n            {\n              path: '${config.ingressPath}',\n              pathType: 'Prefix',\n              backend: {\n                service: {\n                  name: '${config.ingressService}',\n                  port: { number: ${config.ingressServicePort} }\n                }\n              }\n            }\n          ]\n        }\n      }\n    ]\n  }\n};\n\nexport async function createSecondaryIngress() {\n  const kc = new k8s.KubeConfig();\n  kc.loadFromDefault();\n  const k8sNetworkingApi = kc.makeApiClient(k8s.NetworkingV1Api);\n  try {\n    const response = await k8sNetworkingApi.createNamespacedIngress(\n      '${config.namespace}',\n      secondaryIngressManifest\n    );\n    return response.body;\n  } catch (error) {\n    console.error('Error creating secondary Ingress:', error);\n    throw error;\n  }\n}`;
+        }]
+      }
+    }
+  }
+});
+export const secondaryDeploymentName = ${config.name}SecondaryDeployment.metadata.name;`;
           break;
-        case 'deployment':
-          // 主为secret，副为deployment时，secondary deployment 代码应自动带有envFrom: secretRef
-          if (resourceType === 'secret') {
-            // CDK8s
-            secondaryCode = `// --- Secondary: Deployment ---\nimport { Construct } from 'constructs';\nimport { Chart, ChartProps } from 'cdk8s';\nimport { KubeDeployment } from 'cdk8s-plus-27';\n\nexport class ${config.name.charAt(0).toUpperCase() + config.name.slice(1)}SecondaryDeploymentChart extends Chart {\n  constructor(scope: Construct, id: string, props: ChartProps = {}) {\n    super(scope, id, props);\n    new KubeDeployment(this, '${config.name}-deployment', {\n      metadata: {\n        name: '${config.name}',\n        namespace: '${config.namespace}',\n        labels: ${JSON.stringify(labels, null, 8)}\n      },\n      spec: {\n        replicas: ${config.replicas},\n        selector: { matchLabels: ${JSON.stringify(labels, null, 12)} },\n        template: {\n          metadata: { labels: ${JSON.stringify(labels, null, 16)} },\n          spec: {\n            containers: [{\n              name: '${config.name}',\n              image: '${config.image}',\n              ports: [{ containerPort: ${config.port} }],\n              env: [${envVars.map(env => `\n                { name: '${env.name}', value: '${env.value}' }`).join(',')}\n              ],\n              envFrom: [ { secretRef: { name: '${config.name}-secret' } } ],\n              resources: {\n                requests: { cpu: '${config.cpu}', memory: '${config.memory}' },\n                limits: { cpu: '${config.cpuLimit}', memory: '${config.memoryLimit}' }\n              }\n            }]\n          }\n        }\n      }\n    });\n  }\n}`;
-          } else if (iacFramework === 'pulumi') {
-            // Pulumi
-            secondaryCode = `// --- Secondary: Deployment ---\nimport * as k8s from "@pulumi/kubernetes";\n\nconst secondaryDeployment = new k8s.apps.v1.Deployment("${config.name}-deployment", {\n  metadata: {\n    name: "${config.name}",\n    namespace: "${config.namespace}",\n    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  spec: {\n    replicas: ${config.replicas},\n    selector: { matchLabels: ${JSON.stringify(labels, null, 12)} },\n    template: {\n      metadata: { labels: ${JSON.stringify(labels, null, 16)} },\n      spec: {\n        containers: [{\n          name: "${config.name}",\n          image: "${config.image}",\n          ports: [{ containerPort: ${config.port} }],\n          env: [${envVars.map(env => `\n            { name: \"${env.name}\", value: \"${env.value}\" }`).join(',')}\n          ],\n          envFrom: [ { secretRef: { name: "${config.name}-secret" } } ],\n          resources: {\n            requests: { cpu: "${config.cpu}", memory: "${config.memory}" },\n            limits: { cpu: "${config.cpuLimit}", memory: "${config.memoryLimit}" }\n          }\n        }]\n      }\n    }\n  }\n});\n\nexport const secondaryDeploymentName = secondaryDeployment.metadata.name;`;
-          } else if (iacFramework === 'kubernetes-client') {
-            // K8s Client
-            secondaryCode = `// --- Secondary: Deployment ---\nimport * as k8s from '@kubernetes/client-node';\n\nconst secondaryDeploymentManifest: k8s.V1Deployment = {\n  apiVersion: 'apps/v1',\n  kind: 'Deployment',\n  metadata: {\n    name: '${config.name}',\n    namespace: '${config.namespace}',\n    labels: ${JSON.stringify(labels, null, 8)}\n  },\n  spec: {\n    replicas: ${config.replicas},\n    selector: { matchLabels: ${JSON.stringify(labels, null, 12)} },\n    template: {\n      metadata: { labels: ${JSON.stringify(labels, null, 16)} },\n      spec: {\n        containers: [{\n          name: '${config.name}',\n          image: '${config.image}',\n          ports: [{ containerPort: ${config.port} }],\n          env: [${envVars.map(env => `\n            { name: '${env.name}', value: '${env.value}' }`).join(',')}\n          ],\n          envFrom: [ { secretRef: { name: '${config.name}-secret' } } ],\n          resources: {\n            requests: { cpu: '${config.cpu}', memory: '${config.memory}' },\n            limits: { cpu: '${config.cpuLimit}', memory: '${config.memoryLimit}' }\n          }\n        }]\n      }\n    }\n  }\n};\n\nexport async function createSecondaryDeployment() {\n  const kc = new k8s.KubeConfig();\n  kc.loadFromDefault();\n  const k8sAppsApi = kc.makeApiClient(k8s.AppsV1Api);\n  try {\n    const response = await k8sAppsApi.createNamespacedDeployment(\n      '${config.namespace}',\n      secondaryDeploymentManifest\n    );\n    return response.body;\n  } catch (error) {\n    console.error('Error creating secondary Deployment:', error);\n    throw error;\n  }\n}`;
-          } else {
-            // 默认兜底
-            secondaryCode = '';
-          }
+        }
+        case 'storageclass': {
+          const parametersObjP = config.storageClassParameters
+            ? config.storageClassParameters.split(',').reduce((acc: Record<string, string>, pair) => {
+                const [k, v] = pair.split('=');
+                if (k && v) acc[k.trim()] = v.trim();
+                return acc;
+              }, {} as Record<string, string>)
+            : {};
+          secondaryCode = `import * as k8s from "@pulumi/kubernetes";
+
+const ${config.secondaryStorageClassName || config.name + 'StorageClass'} = new k8s.storage.v1.StorageClass("${config.secondaryStorageClassName || config.name + '-storageclass'}", {
+  metadata: { name: "${config.secondaryStorageClassName || config.name + '-storageclass'}" },
+  provisioner: "${config.storageClassProvisioner}",
+  parameters: ${JSON.stringify(parametersObjP, null, 8)}
+});
+export const secondaryStorageClassName = ${config.secondaryStorageClassName || config.name + 'StorageClass'}.metadata.name;`;
           break;
+        }
+        case 'service': {
+          // 主为 ingress 时，默认值联动主 ingress 的 serviceName/servicePort/labels
+          const defaultName = resourceType === 'ingress' ? config.ingressService : (config.secondaryServiceName || `${config.name}-service`);
+          const defaultPort = resourceType === 'ingress' ? config.ingressServicePort : (config.secondaryServicePort || 80);
+          const defaultLabels = resourceType === 'ingress' ? config.labels : (config.secondaryServiceLabels || '');
+          secondaryCode = `import * as k8s from "@pulumi/kubernetes";
+
+const ${config.secondaryServiceName || config.name + 'Service'} = new k8s.core.v1.Service("${config.secondaryServiceName || config.name + '-service'}", {
+  metadata: {
+    name: "${config.secondaryServiceName || config.name + '-service'}",
+    namespace: "${config.namespace}",
+    labels: ${JSON.stringify(parseLabels(config.secondaryServiceLabels || config.labels), null, 8)}
+  },
+  spec: {
+    type: "${config.secondaryServiceType || 'ClusterIP'}",
+    ports: [{
+      port: ${config.secondaryServicePort || defaultPort},
+      targetPort: ${config.secondaryServicePort || defaultPort},
+      protocol: "TCP"
+    }],
+    selector: ${JSON.stringify(parseLabels(config.secondaryServiceLabels || config.labels), null, 8)}
+  }
+});
+export const secondaryServiceName = ${config.secondaryServiceName || config.name + 'Service'}.metadata.name;`;
+          break;
+        }
         default:
           secondaryCode = '';
       }
@@ -735,6 +841,32 @@ export const storageClassName = ${config.name}StorageClass.metadata.name;`;
         case 'deployment':
           secondaryCode = `// --- Secondary: Deployment ---\n// ... pulumi deployment code ...`;
           break;
+        case 'service': {
+          // 主为 ingress 时，默认值联动主 ingress 的 serviceName/servicePort/labels
+          const defaultName = resourceType === 'ingress' ? config.ingressService : (config.secondaryServiceName || `${config.name}-service`);
+          const defaultPort = resourceType === 'ingress' ? config.ingressServicePort : (config.secondaryServicePort || 80);
+          const defaultLabels = resourceType === 'ingress' ? config.labels : (config.secondaryServiceLabels || '');
+          secondaryCode = `import * as k8s from "@pulumi/kubernetes";
+
+const ${config.secondaryServiceName || config.name + 'Service'} = new k8s.core.v1.Service("${config.secondaryServiceName || config.name + '-service'}", {
+  metadata: {
+    name: "${config.secondaryServiceName || config.name + '-service'}",
+    namespace: "${config.namespace}",
+    labels: ${JSON.stringify(parseLabels(config.secondaryServiceLabels || config.labels), null, 8)}
+  },
+  spec: {
+    type: "${config.secondaryServiceType || 'ClusterIP'}",
+    ports: [{
+      port: ${config.secondaryServicePort || defaultPort},
+      targetPort: ${config.secondaryServicePort || defaultPort},
+      protocol: "TCP"
+    }],
+    selector: ${JSON.stringify(parseLabels(config.secondaryServiceLabels || config.labels), null, 8)}
+  }
+});
+export const secondaryServiceName = ${config.secondaryServiceName || config.name + 'Service'}.metadata.name;`;
+          break;
+        }
         default:
           secondaryCode = '';
       }
@@ -1068,6 +1200,50 @@ export async function createStorageClass() {
         case 'deployment':
           secondaryCode = `// --- Secondary: Deployment ---\n// ... k8s client deployment code ...`;
           break;
+        case 'service': {
+          // 主为 ingress 时，默认值联动主 ingress 的 serviceName/servicePort/labels
+          const defaultName = resourceType === 'ingress' ? config.ingressService : (config.secondaryServiceName || `${config.name}-service`);
+          const defaultPort = resourceType === 'ingress' ? config.ingressServicePort : (config.secondaryServicePort || 80);
+          const defaultLabels = resourceType === 'ingress' ? config.labels : (config.secondaryServiceLabels || '');
+          secondaryCode = `import * as k8s from '@kubernetes/client-node';
+
+const kc = new k8s.KubeConfig();
+kc.loadFromDefault();
+const k8sCoreApi = kc.makeApiClient(k8s.CoreV1Api);
+
+const secondaryServiceManifest: k8s.V1Service = {
+  apiVersion: 'v1',
+  kind: 'Service',
+  metadata: {
+    name: '${config.secondaryServiceName || config.name + '-service'}',
+    namespace: '${config.namespace}',
+    labels: ${JSON.stringify(parseLabels(config.secondaryServiceLabels || config.labels), null, 8)}
+  },
+  spec: {
+    type: '${config.secondaryServiceType || 'ClusterIP'}',
+    ports: [{
+      port: ${config.secondaryServicePort || defaultPort},
+      targetPort: ${config.secondaryServicePort || defaultPort},
+      protocol: "TCP"
+    }],
+    selector: ${JSON.stringify(parseLabels(config.secondaryServiceLabels || config.labels), null, 8)}
+  }
+};
+
+export async function createSecondaryService() {
+  try {
+    const response = await k8sCoreApi.createNamespacedService(
+      '${config.namespace}',
+      secondaryServiceManifest
+    );
+    return response.body;
+  } catch (error) {
+    console.error('Error creating secondary Service:', error);
+    throw error;
+  }
+}`;
+          break;
+        }
         default:
           secondaryCode = '';
       }
@@ -1313,7 +1489,7 @@ export async function createStorageClass() {
             apiVersion: 'v1',
             kind: 'PersistentVolumeClaim',
             metadata: {
-              name: `${config.name}-pvc`,
+              name: config.secondaryPvcName || `${config.name}-pvc`,
               namespace: config.namespace,
               labels: { ...labels },
               ...(config.annotations ? { annotations: parseLabels(config.annotations) } : {}),
@@ -1325,59 +1501,93 @@ export async function createStorageClass() {
                   storage: config.pvcStorage,
                 },
               },
-              ...(String(secondaryResourceType) === 'storageclass'
-                ? { storageClassName: config.secondaryStorageClassName || `${config.name}-storageclass` }
-                : (config.pvcStorageClass ? { storageClassName: config.pvcStorageClass } : {})),
+              storageClassName: (resourceType === 'storageclass' && secondaryResourceType === 'pvc')
+                ? `${config.name}-storageclass`
+                : (config.secondaryStorageClassName || config.pvcStorageClass),
               ...(config.volumeMode ? { volumeMode: config.volumeMode } : {}),
             },
           };
           break;
-        case 'secret':
-          if (resourceType === 'ingress') {
-            secondaryManifest = {
-              apiVersion: 'v1',
-              kind: 'Secret',
-              metadata: {
-                name: `${config.name}-secret`,
-                namespace: config.namespace,
-                labels: { ...labels },
-              },
-              type: 'kubernetes.io/tls',
-            };
+        case 'secret': {
+          // 解析副级 Secret 字段
+          const name = config.secondarySecretName || `${config.name}-secret`;
+          const labels = config.secondarySecretLabels ? parseLabels(config.secondarySecretLabels) : parseLabels(config.labels);
+          const annotations = config.secondarySecretAnnotations ? parseLabels(config.secondarySecretAnnotations) : {};
+          const immutable = config.secondarySecretImmutable === 'true';
+          const type = config.secondarySecretType || config.secretType || 'Opaque';
+          let data: Record<string, string> = {};
+          // 根据不同类型处理 Secret Data
+          if (type === 'kubernetes.io/tls') {
+            // tls.crt, tls.key
+            const crt = (config.secondarySecretData || '').split('\n').find(s => s.trim().startsWith('tls.crt=')) || '';
+            const key = (config.secondarySecretData || '').split('\n').find(s => s.trim().startsWith('tls.key=')) || '';
+            const crtVal = crt.split('=')[1] || '';
+            const keyVal = key.split('=')[1] || '';
+            if (crtVal) data['tls.crt'] = btoa(crtVal);
+            if (keyVal) data['tls.key'] = btoa(keyVal);
+          } else if (type === 'kubernetes.io/dockerconfigjson') {
+            // 只允许 .dockerconfigjson 字段
+            const dockerVal = (config.secondarySecretData || '').split('=')[1] || '';
+            if (dockerVal) data['.dockerconfigjson'] = btoa(dockerVal);
+          } else if (type === 'kubernetes.io/basic-auth') {
+            // username, password
+            const lines = (config.secondarySecretData || '').split('\n');
+            lines.forEach(line => {
+              const [k, v] = line.split('=');
+              if (k && v !== undefined && v !== '') data[k.trim()] = btoa(v.trim());
+            });
+          } else if (type === 'kubernetes.io/ssh-auth') {
+            // ssh-privatekey
+            const keyVal = (config.secondarySecretData || '').split('=')[1] || '';
+            if (keyVal) data['ssh-privatekey'] = btoa(keyVal);
           } else {
-            secondaryManifest = {
-              apiVersion: 'v1',
-              kind: 'Secret',
-              metadata: {
-                name: `${config.name}-secret`,
-                namespace: config.namespace,
-                labels: { ...labels },
-              },
-              type: config.secretType,
-              data: config.secretData.split(',').reduce((acc: Record<string, string>, pair) => {
-                const [k, v] = pair.split('=');
-                if (k && v) acc[k.trim()] = btoa(v.trim());
-                return acc;
-              }, {} as Record<string, string>),
-            };
+            // Opaque 或其他类型
+            const lines = (config.secondarySecretData || '').split('\n');
+            lines.forEach(line => {
+              const [k, v] = line.split('=');
+              if (k && v !== undefined && v !== '') data[k.trim()] = btoa(v.trim());
+            });
           }
+          secondaryManifest = {
+            apiVersion: 'v1',
+            kind: 'Secret',
+            metadata: {
+              name,
+              namespace: config.namespace,
+              labels: { ...labels },
+              annotations: { ...annotations },
+            },
+            immutable,
+            type,
+            data,
+          };
           break;
-        case 'configmap':
-          const configData = parseEnvVars(config.env).reduce((acc: Record<string, string>, env: { name: string, value: string }) => {
-            acc[env.name] = env.value;
+        }
+        case 'configmap': {
+          // 解析副级 ConfigMap 字段
+          const name = config.secondaryConfigMapName || `${config.name}-config`;
+          const labels = config.secondaryConfigMapLabels ? parseLabels(config.secondaryConfigMapLabels) : parseLabels(config.labels);
+          const annotations = config.secondaryConfigMapAnnotations ? parseLabels(config.secondaryConfigMapAnnotations) : {};
+          const immutable = config.secondaryConfigMapImmutable === 'true';
+          const data = (config.secondaryConfigMapData || '').split('\n').reduce((acc: Record<string, string>, line) => {
+            const [k, v] = line.split('=');
+            if (k && v !== undefined && v !== '') acc[k.trim()] = v.trim();
             return acc;
           }, {} as Record<string, string>);
           secondaryManifest = {
             apiVersion: 'v1',
             kind: 'ConfigMap',
             metadata: {
-              name: `${config.name}-config`,
+              name,
               namespace: config.namespace,
+              labels: { ...labels },
+              annotations: { ...annotations },
             },
-            ...(config.configmapType ? { type: config.configmapType } : {}),
-            data: configData,
+            immutable,
+            data,
           };
           break;
+        }
         case 'ingress':
           secondaryManifest = {
             apiVersion: 'networking.k8s.io/v1',
@@ -1495,6 +1705,27 @@ export async function createStorageClass() {
             }, {} as Record<string, string>) } : {}),
           };
           break;
+        case 'service': {
+          // 无论主为 ingress 还是其他，副为 service 时都渲染 Service Name 输入框
+          const name = config.secondaryServiceName || (resourceType === 'ingress' ? (config.ingressService || `${config.name}-service`) : `${config.name}-service`);
+          const port = config.secondaryServicePort || (resourceType === 'ingress' ? config.ingressServicePort : 80);
+          const labels = config.secondaryServiceLabels ? parseLabels(config.secondaryServiceLabels) : parseLabels(config.labels);
+          secondaryManifest = {
+            apiVersion: 'v1',
+            kind: 'Service',
+            metadata: {
+              name,
+              namespace: config.namespace,
+              labels,
+            },
+            spec: {
+              type: config.secondaryServiceType || 'ClusterIP',
+              ports: [{ port: 80, targetPort: port, protocol: 'TCP' }],
+              selector: labels,
+            },
+          };
+          break;
+        }
         default:
           return yamlStringify(manifest);
       }
@@ -1632,20 +1863,100 @@ export async function createStorageClass() {
             </>
           );
         }
-        // 其余情况不渲染特殊表单
-        return null;
+        // 其他情况补全表单
+        return (
+          <>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Secret Name</label>
+              <input
+                type="text"
+                value={config.secondarySecretName || `${config.name}-secret`}
+                onChange={e => handleConfigChange('secondarySecretName', e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
+                placeholder={`${config.name}-secret`}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Secret Type</label>
+              <select
+                value={config.secondarySecretType || 'Opaque'}
+                onChange={e => handleConfigChange('secondarySecretType', e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
+              >
+                <option value="Opaque">Opaque</option>
+                <option value="kubernetes.io/dockerconfigjson">kubernetes.io/dockerconfigjson</option>
+                <option value="kubernetes.io/tls">kubernetes.io/tls</option>
+                <option value="kubernetes.io/basic-auth">kubernetes.io/basic-auth</option>
+                <option value="kubernetes.io/ssh-auth">kubernetes.io/ssh-auth</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Secret Data (key=value,每行一对)</label>
+              <textarea
+                value={config.secondarySecretData || ''}
+                onChange={e => handleConfigChange('secondarySecretData', e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
+                rows={4}
+                placeholder={"username=admin\npassword=123456"}
+              />
+            </div>
+          </>
+        );
       case 'configmap':
         return (
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">ConfigMap Type (可选)</label>
-            <input
-              type="text"
-              value={config.configmapType}
-              onChange={(e) => handleConfigChange('configmapType', e.target.value)}
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
-              placeholder=""
-            />
-          </div>
+          <>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">ConfigMap Name</label>
+              <input
+                type="text"
+                value={config.secondaryConfigMapName || `${config.name}-config`}
+                onChange={e => handleConfigChange('secondaryConfigMapName', e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
+                placeholder={`${config.name}-config`}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Labels (key=value,逗号分隔)</label>
+              <input
+                type="text"
+                value={config.secondaryConfigMapLabels || ''}
+                onChange={e => handleConfigChange('secondaryConfigMapLabels', e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
+                placeholder="env=prod,app=demo"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Annotations (key=value,逗号分隔)</label>
+              <input
+                type="text"
+                value={config.secondaryConfigMapAnnotations || ''}
+                onChange={e => handleConfigChange('secondaryConfigMapAnnotations', e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
+                placeholder="creator=ai"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Immutable</label>
+              <select
+                value={config.secondaryConfigMapImmutable || 'false'}
+                onChange={e => handleConfigChange('secondaryConfigMapImmutable', e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
+              >
+                <option value="false">false</option>
+                <option value="true">true</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Config Data (key=value,每行一对)</label>
+              <textarea
+                value={config.secondaryConfigMapData || ''}
+                onChange={e => handleConfigChange('secondaryConfigMapData', e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
+                rows={4}
+                placeholder={"key1=value1\nkey2=value2"}
+              />
+            </div>
+          </>
         );
       case 'pvc':
         // 主为 storageclass 副为 pvc 时，渲染副 PVC 的表单项（name、storage、accessModes、storageClassName）
@@ -1690,14 +2001,20 @@ export async function createStorageClass() {
                   />
                 </div>
                 <div>
-                  <label htmlFor="secondary-pvc-storage-class" className="block text-sm font-medium text-gray-300 mb-2">StorageClassName</label>
+                  <label htmlFor="secondary-pvc-storage-class" className="block text-sm font-medium text-gray-300 mb-2">StorageClassName (可选)</label>
                   <input
                     id="secondary-pvc-storage-class"
                     name="secondary-pvc-storage-class"
                     type="text"
-                    value={config.name}
-                    disabled
+                    value={
+                      (resourceType === 'storageclass' && secondaryResourceType === 'pvc')
+                        ? `${config.name}-storageclass`
+                        : (config.secondaryStorageClassName || '')
+                    }
+                    onChange={e => handleConfigChange('secondaryStorageClassName', e.target.value)}
                     className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
+                    placeholder=""
+                    disabled={resourceType === 'storageclass' && secondaryResourceType === 'pvc'}
                   />
                 </div>
               </div>
@@ -1751,10 +2068,15 @@ export async function createStorageClass() {
                     id="secondary-pvc-storage-class"
                     name="secondary-pvc-storage-class"
                     type="text"
-                    value={config.pvcStorageClass}
-                    onChange={e => handleConfigChange('pvcStorageClass', e.target.value)}
+                    value={
+                      (resourceType === 'storageclass' && secondaryResourceType === 'pvc')
+                        ? `${config.name}-storageclass`
+                        : (config.secondaryStorageClassName || '')
+                    }
+                    onChange={e => handleConfigChange('secondaryStorageClassName', e.target.value)}
                     className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
                     placeholder=""
+                    disabled={resourceType === 'storageclass' && secondaryResourceType === 'pvc'}
                   />
                 </div>
               </div>
@@ -1778,20 +2100,39 @@ export async function createStorageClass() {
             </div>
           );
         }
-        // 其他情况，渲染 PVC name
+        // 其他情况，渲染 PVC name + StorageClassName
         return (
-          <div>
-            <label htmlFor="secondary-pvc-name" className="block text-sm font-medium text-gray-300 mb-2">PVC Name</label>
-            <input
-              id="secondary-pvc-name"
-              name="secondary-pvc-name"
-              type="text"
-              value={config.secondaryPvcName || `${config.name}-pvc`}
-              onChange={e => handleConfigChange('secondaryPvcName', e.target.value)}
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
-              placeholder={`${config.name}-pvc`}
-            />
-          </div>
+          <>
+            <div>
+              <label htmlFor="secondary-pvc-name" className="block text-sm font-medium text-gray-300 mb-2">PVC Name</label>
+              <input
+                id="secondary-pvc-name"
+                name="secondary-pvc-name"
+                type="text"
+                value={config.secondaryPvcName || `${config.name}-pvc`}
+                onChange={e => handleConfigChange('secondaryPvcName', e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
+                placeholder={`${config.name}-pvc`}
+              />
+            </div>
+            <div>
+              <label htmlFor="secondary-pvc-storage-class" className="block text-sm font-medium text-gray-300 mb-2">StorageClassName (可选)</label>
+              <input
+                id="secondary-pvc-storage-class"
+                name="secondary-pvc-storage-class"
+                type="text"
+                value={
+                  (resourceType === 'storageclass' && secondaryResourceType === 'pvc')
+                    ? `${config.name}-storageclass`
+                    : (config.secondaryStorageClassName || '')
+                }
+                onChange={e => handleConfigChange('secondaryStorageClassName', e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
+                placeholder=""
+                disabled={resourceType === 'storageclass' && secondaryResourceType === 'pvc'}
+              />
+            </div>
+          </>
         );
       case 'ingress':
         return (
@@ -2402,20 +2743,14 @@ export async function createStorageClass() {
                             name="secondary-pvc-storage-class"
                             type="text"
                             value={
-                              // 主为storageclass副为pvc时，联动主表单Name字段
-                              (String(resourceType) === 'storageclass' && String(secondaryResourceType) === 'pvc')
-                                ? config.name
-                                : ((String(resourceType) === 'pvc' && String(secondaryResourceType) === 'storageclass')
-                                  ? (config.secondaryStorageClassName || `${config.name}-storageclass`)
-                                  : config.pvcStorageClass)
+                              (resourceType === 'storageclass' && secondaryResourceType === 'pvc')
+                                ? `${config.name}-storageclass`
+                                : (config.secondaryStorageClassName || '')
                             }
-                            onChange={(e) => handleConfigChange('pvcStorageClass', e.target.value)}
+                            onChange={e => handleConfigChange('secondaryStorageClassName', e.target.value)}
                             className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
                             placeholder=""
-                            disabled={
-                              (String(resourceType) === 'storageclass' && String(secondaryResourceType) === 'pvc') ||
-                              (String(resourceType) === 'pvc' && String(secondaryResourceType) === 'storageclass')
-                            }
+                            disabled={resourceType === 'storageclass' && secondaryResourceType === 'pvc'}
                           />
                         </div>
                       </div>
@@ -2424,11 +2759,12 @@ export async function createStorageClass() {
 
                   {/* 二级资源表单 */}
                   {secondaryResourceOptions[resourceType] && secondaryResourceOptions[resourceType].length > 0 && secondaryResourceType && secondaryResourceType !== '' && secondaryResourceType !== 'None' && (
-                    <>
-                      <div className="border-t border-gray-600 my-4"></div>
-                      <h4 className="text-md font-semibold text-white mb-2">Secondary Configuration</h4>
+                    <div className="bg-gray-800/50 rounded-lg p-4 mt-4 border border-gray-600">
+                      <div className="border-b border-gray-600 mb-4 pb-2">
+                        <h4 className="text-md font-semibold text-white">Secondary Configuration</h4>
+                      </div>
                       {renderSecondaryConfigForm()}
-                    </>
+                    </div>
                   )}
 
                   {resourceType === 'deployment' && (secondaryResourceType === 'configmap' || secondaryResourceType === 'secret') && (
@@ -2442,6 +2778,16 @@ export async function createStorageClass() {
                         onChange={e => handleConfigChange('volumeMountPath', e.target.value)}
                         className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
                         placeholder="/etc/config"
+                      />
+                      <label htmlFor="mount-data" className="block text-sm font-medium text-gray-300 mb-2 mt-4">挂载数据 (key=value, 每行一对)</label>
+                      <textarea
+                        id="mount-data"
+                        name="mount-data"
+                        value={config.mountData || ''}
+                        onChange={e => handleConfigChange('mountData', e.target.value)}
+                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-white"
+                        rows={4}
+                        placeholder={"key1=value1\nkey2=value2"}
                       />
                     </div>
                   )}
